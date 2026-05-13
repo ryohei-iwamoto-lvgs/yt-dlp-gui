@@ -12,6 +12,10 @@ from tkinter import filedialog, messagebox, scrolledtext, ttk
 DEFAULT_DIR = str(Path.home() / "Downloads")
 
 FORMAT_PRESETS = {
+    "編集ソフト互換 (H.264/AAC mp4) [推奨]": [
+        "-f",
+        "bv*[vcodec^=avc1]+ba[acodec^=mp4a]/bv*[ext=mp4]+ba[ext=m4a]/b",
+    ],
     "ベスト画質 (動画+音声)": [
         "-f",
         "bv*[ext=mp4]+ba[ext=m4a]/bv*+ba/b",
@@ -33,10 +37,17 @@ FORMAT_PRESETS = {
 }
 
 VIDEO_PRESET_NAMES = {
+    "編集ソフト互換 (H.264/AAC mp4) [推奨]",
     "ベスト画質 (動画+音声)",
     "1080p 以下",
     "720p 以下",
     "480p 以下",
+}
+
+# These presets must guarantee H.264/AAC output even if the source has no
+# avc1/mp4a streams — fall back to a re-encode via ffmpeg.
+RECODE_PRESET_NAMES = {
+    "編集ソフト互換 (H.264/AAC mp4) [推奨]",
 }
 
 
@@ -192,6 +203,15 @@ class YtDlpGUI(tk.Tk):
             cmd += [
                 "--merge-output-format", "mp4",
                 "--remux-video", "mp4",
+            ]
+
+        if preset in RECODE_PRESET_NAMES:
+            # Guarantee H.264 + AAC inside mp4 — re-encodes only when the
+            # selected streams aren't already avc1/mp4a.
+            cmd += [
+                "--recode-video", "mp4",
+                "--postprocessor-args",
+                "VideoConvertor:-c:v libx264 -preset veryfast -crf 18 -c:a aac -b:a 192k -movflags +faststart",
             ]
 
         if self.subs_var.get():
