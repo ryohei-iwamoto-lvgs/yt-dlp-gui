@@ -12,12 +12,31 @@ from tkinter import filedialog, messagebox, scrolledtext, ttk
 DEFAULT_DIR = str(Path.home() / "Downloads")
 
 FORMAT_PRESETS = {
-    "ベスト画質 (動画+音声)": ["-f", "bv*+ba/b"],
-    "1080p 以下": ["-f", "bv*[height<=1080]+ba/b[height<=1080]"],
-    "720p 以下": ["-f", "bv*[height<=720]+ba/b[height<=720]"],
-    "480p 以下": ["-f", "bv*[height<=480]+ba/b[height<=480]"],
+    "ベスト画質 (動画+音声)": [
+        "-f",
+        "bv*[ext=mp4]+ba[ext=m4a]/bv*+ba/b",
+    ],
+    "1080p 以下": [
+        "-f",
+        "bv*[height<=1080][ext=mp4]+ba[ext=m4a]/bv*[height<=1080]+ba/b[height<=1080]",
+    ],
+    "720p 以下": [
+        "-f",
+        "bv*[height<=720][ext=mp4]+ba[ext=m4a]/bv*[height<=720]+ba/b[height<=720]",
+    ],
+    "480p 以下": [
+        "-f",
+        "bv*[height<=480][ext=mp4]+ba[ext=m4a]/bv*[height<=480]+ba/b[height<=480]",
+    ],
     "音声のみ (mp3)": ["-x", "--audio-format", "mp3", "--audio-quality", "0"],
     "音声のみ (m4a)": ["-x", "--audio-format", "m4a", "--audio-quality", "0"],
+}
+
+VIDEO_PRESET_NAMES = {
+    "ベスト画質 (動画+音声)",
+    "1080p 以下",
+    "720p 以下",
+    "480p 以下",
 }
 
 
@@ -166,7 +185,14 @@ class YtDlpGUI(tk.Tk):
             "-o",
             os.path.join(out_dir, "%(title)s [%(id)s].%(ext)s"),
         ]
-        cmd += FORMAT_PRESETS[self.format_var.get()]
+        preset = self.format_var.get()
+        cmd += FORMAT_PRESETS[preset]
+
+        if preset in VIDEO_PRESET_NAMES:
+            cmd += [
+                "--merge-output-format", "mp4",
+                "--remux-video", "mp4",
+            ]
 
         if self.subs_var.get():
             cmd += ["--write-subs", "--write-auto-subs", "--sub-langs", "ja,en"]
