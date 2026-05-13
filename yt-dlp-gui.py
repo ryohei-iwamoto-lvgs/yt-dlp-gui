@@ -14,7 +14,7 @@ DEFAULT_DIR = str(Path.home() / "Downloads")
 FORMAT_PRESETS = {
     "編集ソフト互換 (H.264/AAC mp4) [推奨]": [
         "-f",
-        "bv*[vcodec^=avc1]+ba[acodec^=mp4a]/bv*[ext=mp4]+ba[ext=m4a]/b",
+        "bv*+ba/b",
     ],
     "ベスト画質 (動画+音声)": [
         "-f",
@@ -199,19 +199,24 @@ class YtDlpGUI(tk.Tk):
         preset = self.format_var.get()
         cmd += FORMAT_PRESETS[preset]
 
-        if preset in VIDEO_PRESET_NAMES:
+        if preset in VIDEO_PRESET_NAMES and preset not in RECODE_PRESET_NAMES:
             cmd += [
                 "--merge-output-format", "mp4",
                 "--remux-video", "mp4",
             ]
 
         if preset in RECODE_PRESET_NAMES:
-            # Guarantee H.264 + AAC inside mp4 — re-encodes only when the
-            # selected streams aren't already avc1/mp4a.
+            # Force a real re-encode to H.264 + AAC + yuv420p. We route
+            # through an mkv intermediate because --recode-video skips
+            # work when the file is already in the target container —
+            # which would leave VP9/AV1 streams sitting inside an mp4
+            # box and make Premiere/iMovie treat the file as audio-only.
             cmd += [
+                "--merge-output-format", "mkv",
+                "--remux-video", "mkv",
                 "--recode-video", "mp4",
                 "--postprocessor-args",
-                "VideoConvertor:-c:v libx264 -preset veryfast -crf 18 -c:a aac -b:a 192k -movflags +faststart",
+                "VideoConvertor:-c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p -profile:v high -level 4.1 -c:a aac -b:a 192k -movflags +faststart",
             ]
 
         if self.subs_var.get():
