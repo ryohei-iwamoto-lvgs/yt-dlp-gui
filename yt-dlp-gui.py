@@ -206,17 +206,14 @@ class YtDlpGUI(tk.Tk):
             ]
 
         if preset in RECODE_PRESET_NAMES:
-            # Force a real re-encode to H.264 + AAC + yuv420p. We route
-            # through an mkv intermediate because --recode-video skips
-            # work when the file is already in the target container —
-            # which would leave VP9/AV1 streams sitting inside an mp4
-            # box and make Premiere/iMovie treat the file as audio-only.
+            # We don't trust yt-dlp's --recode-video here — its
+            # --postprocessor-args plumbing has been unreliable in
+            # practice (codec args silently dropped). Merge into mkv
+            # (any codec is legal) and run ffmpeg ourselves afterwards
+            # via _recode_h264_in_place().
             cmd += [
                 "--merge-output-format", "mkv",
-                "--remux-video", "mkv",
-                "--recode-video", "mp4",
-                "--postprocessor-args",
-                "VideoConvertor:-c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p -profile:v high -level 4.1 -c:a aac -b:a 192k -movflags +faststart",
+                "--print", "after_move:filepath",
             ]
 
         if self.subs_var.get():
@@ -236,6 +233,10 @@ class YtDlpGUI(tk.Tk):
             return
         if self.proc and self.proc.poll() is None:
             return
+
+        preset = self.format_var.get()
+        self._recode_h264 = preset in RECODE_PRESET_NAMES
+        self._captured_files: list[str] = []
 
         try:
             cmd = self._build_command(url)
@@ -268,9 +269,77 @@ class YtDlpGUI(tk.Tk):
         assert self.proc.stdout is not None
         for line in self.proc.stdout:
             self.log_queue.put(line)
+            if self._recode_h264:
+                stripped = line.strip()
+                # `--print after_move:filepath` writes a bare absolute
+                # path; ignore yt-dlp's bracketed status lines.
+                if stripped.startswith("/") and Path(stripped).is_file():
+                    self._captured_files.append(stripped)
         rc = self.proc.wait()
-        self.log_queue.put(f"\n[終了コード: {rc}]\n")
+        self.log_queue.put(f"\n[yt-dlp 終了コード: {rc}]\n")
+
+        if rc == 0 and self._recode_h264:
+            for fp in self._captured_files:
+                self._recode_h264_in_place(fp)
+
         self.after(0, self._reset_buttons)
+
+    def _recode_h264_in_place(self, src_path: str):
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            self.log_queue.put("[recode] ffmpeg が見つかりません。`brew install ffmpeg` してください。\n")
+            return
+
+        src = Path(src_path)
+        if not src.is_file():
+            self.log_queue.put(f"[recode] スキップ (ファイルなし): {src}\n")
+            return
+
+        dst = src.with_suffix(".mp4")
+        tmp = src.with_name(src.stem + ".__h264_tmp__.mp4")
+
+        cmd = [
+            ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-stats",
+            "-i", str(src),
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-crf", "18",
+            "-pix_fmt", "yuv420p",
+            "-profile:v", "high",
+            "-level", "4.1",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-movflags", "+faststart",
+            str(tmp),
+        ]
+        self.log_queue.put(f"\n[recode] {src.name} → H.264/AAC mp4\n")
+        self.log_queue.put("$ " + " ".join(cmd) + "\n")
+
+        try:
+            proc = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, bufsize=1,
+            )
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                self.log_queue.put(line)
+            rc = proc.wait()
+        except Exception as e:
+            self.log_queue.put(f"[recode] 起動失敗: {e}\n")
+            return
+
+        if rc != 0:
+            self.log_queue.put(f"[recode] 失敗 (rc={rc})\n")
+            if tmp.exists():
+                tmp.unlink()
+            return
+
+        # Replace src with the new mp4. If src already had .mp4 extension
+        # we overwrite in place; otherwise we delete the source container.
+        os.replace(tmp, dst)
+        if src != dst and src.exists():
+            src.unlink()
+        self.log_queue.put(f"[recode] 完了: {dst}\n")
 
     def _reset_buttons(self):
         self.dl_btn.configure(state="normal")
